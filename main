@@ -1,0 +1,132 @@
+/*
+ * play4.c
+ *
+ *  Created on: 2015-2-5
+ *      Author: ipanel
+ */
+/*
+ * SHELL
+ * */
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <wait.h>
+#include <string.h>
+#include <pwd.h>
+#include <errno.h>
+
+#define MAX_COMMAND_LENGTH		256
+#define MAX_PARAMETER_NUM		10
+
+static char* _get_split_by_space(char *str){
+	/*
+	 * 从str中提取用空格隔开的字符串
+	 * @usage： 传入str后，第一次调用本函数将返回第一个结果字符串，第二次调用时传入NULL则可以继续上一次的提取
+	 * @example: 需要提取"I am Yes"则第一次调用传入整个字符串，返回I，继续调用则传入NULL，则返回am，第三次调用传入NULL
+	 * 			 返回Yes，第四次调用传入NULL则返回NULL，结束
+	 * */
+	int start = 0;		//标记是否遇到第一个非空字符
+	static char *_str;
+	char *ret = NULL;
+
+	if (str)
+		_str = str;
+	//扫描字符串找到合法字符 A->Z a->z 0->9
+	while (*_str != 0) {
+		switch (*_str) {
+			//开始遇到合法字符，则将此位置存储下来，并标记start显示已经找到第一个合法字符了，
+		case 'A' ... 'Z':
+		case 'a' ... 'z':
+		case '0' ... '9':
+		case '_': case '-':
+			start = 1;
+			if (!ret)
+				ret = _str;
+			_str++;
+			break;
+		default:
+			//如果已经开始是合法字符了，则标记此位为0，将_str移到下一位,反之则将_str移动到下一位继续寻找
+			start ? *_str = 0, start = -1 : 0;
+			_str++;
+			break;
+		}
+		//分离出第一个合法的字符串了，跳出循环
+		if (start == -1)
+			break;
+	}
+
+	return ret;
+}
+
+static void _parse_order(char *order,char **parameter){
+	//解析命令，将order里面的命令名和相关参数分开，分别放到cmd_name和parameter中
+	int i;
+	parameter[0] = _get_split_by_space(order);
+	for (i = 1; i < MAX_PARAMETER_NUM; ++i) {
+		parameter[i] = _get_split_by_space(NULL);
+		if (!parameter[i])
+			break;
+	}
+}
+
+static void _type_prompt(){
+	//用户名@主机名:路径$
+	char hostname[128];
+	char path_buf[512],*path;
+	struct passwd *pwd;
+
+	gethostname(hostname, 128);
+	pwd = getpwuid(getuid());
+	path = getcwd(path_buf, 512);
+	*(path + 1) = 0;
+
+	printf("[TECHPROVE] %s@", pwd->pw_name);
+	printf("%s:", hostname);
+	printf("%s",path);
+	printf("%c", geteuid() ? '#' : '$');
+
+}
+
+static int _console(){
+/*
+ * 不断监听用户输入，一旦用户输入命令则使用fork新建一个线程执行用户的命令
+ * */
+	char order[MAX_COMMAND_LENGTH];
+	char *paramater[MAX_PARAMETER_NUM];
+
+	int ret = 0;
+	int count = 0;
+
+	//从标准输入读取命令，以换行符结束
+	for (;;) {
+		_type_prompt();
+
+		for (count = 0; count < MAX_COMMAND_LENGTH; ++count) {
+			order[count] = getchar();
+			if (order[count] == '\n'){
+				order[count] = 0;
+				break;
+			}
+		}
+
+		//解析命令，分离函数名和参数
+		_parse_order(order, paramater);
+
+		//执行用户命令
+		if (!fork()) {
+			//子线程,执行用户命令
+			execvp(paramater[0], paramater);
+			printf("command not found\n");
+		} else {
+			//父线程,等待子进程退出
+			waitpid(0, &ret, 0);
+		}
+
+	}
+	return 0;
+}
+
+int main(int argc, char **argv) {
+	return _console();
+}
+
